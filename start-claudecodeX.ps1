@@ -1,8 +1,12 @@
 $KIMI_KEY = "your kimi api key"
 $PROXY_SCRIPT = Join-Path $PSScriptRoot "proxy.mjs"
-$PROXY_PORT = 4010
+$CLI_SCRIPT  = Join-Path $PSScriptRoot "package\cli.js"
+$PROXY_PORT  = 4010
 
 $env:KIMI_API_KEY = $KIMI_KEY
+$env:DISABLE_TELEMETRY = "1"
+$env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+
 $proxyProc = Start-Process -FilePath "node" -ArgumentList "`"$PROXY_SCRIPT`"" -PassThru -WindowStyle Hidden
 Write-Host "[*] proxy started (PID $($proxyProc.Id)), waiting for ready..." -ForegroundColor Cyan
 
@@ -25,7 +29,7 @@ $env:ANTHROPIC_BASE_URL = "http://localhost:$PROXY_PORT"
 $env:ANTHROPIC_API_KEY  = $KIMI_KEY
 
 try {
-    & claudecodeX @args
+    & node $CLI_SCRIPT @args
 } finally {
     Write-Host "`n[*] shutting down proxy (PID $($proxyProc.Id))..." -ForegroundColor Cyan
     Stop-Process -Id $proxyProc.Id -Force -ErrorAction SilentlyContinue
