@@ -3,7 +3,7 @@ import https from "node:https";
 
 const KIMI_API_BASE = "https://api.moonshot.cn";
 const KIMI_MODEL = "kimi-k2.5";
-const KIMI_API_KEY = process.env.KIMI_API_KEY || "";
+const KIMI_API_KEY = process.argv[2] || process.env.KIMI_API_KEY || "";
 const PORT = parseInt(process.env.PROXY_PORT || "4010", 10);
 
 function convertAnthropicToOpenAI(body) {
@@ -251,4 +251,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`[proxy] Anthropic → Kimi (${KIMI_MODEL}) proxy listening on http://localhost:${PORT}`);
   console.log(`[proxy] Target: ${KIMI_API_BASE}/v1/chat/completions`);
+  console.log(`[proxy] API Key: ${KIMI_API_KEY ? KIMI_API_KEY.slice(0, 8) + "..." : "NOT SET"}`);
 });
