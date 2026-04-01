@@ -1,4 +1,4 @@
-$KIMI_KEY = "your kimi api key"
+$KIMI_KEY = "YOUR_KIMI_API_KEY_HERE"
 $PROXY_SCRIPT = Join-Path $PSScriptRoot "proxy.mjs"
 $CLI_SCRIPT  = Join-Path $PSScriptRoot "package\cli.js"
 $PROXY_PORT  = 4010
@@ -6,6 +6,7 @@ $PROXY_PORT  = 4010
 $env:KIMI_API_KEY = $KIMI_KEY
 $env:DISABLE_TELEMETRY = "1"
 $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+$env:DISABLE_INSTALLATION_CHECKS = "1"
 
 $proxyProc = Start-Process -FilePath "node" -ArgumentList "`"$PROXY_SCRIPT`"" -PassThru -WindowStyle Hidden
 Write-Host "[*] proxy started (PID $($proxyProc.Id)), waiting for ready..." -ForegroundColor Cyan
