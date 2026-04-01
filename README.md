@@ -41,6 +41,18 @@ restored-src/src/
 └── vim/                  # Vim 模式
 ```
 
+Open-source Claude Code with KIMI2.5 backend support ,Simply enter your KIMI API KEY to complete deployment.
+<img width="485" height="193" alt="image" src="https://github.com/user-attachments/assets/483db6a1-76ee-4317-9566-9b7b543ffc3b" />
+
+<img width="1044" height="88" alt="image" src="https://github.com/user-attachments/assets/3eda8577-3d46-46d8-89c7-c74fa8fb4768" />
+
+
+(base) PS F:\AI\claude\claude-code-sourcemap-main> powershell -ExecutionPolicy Bypass -File "f:\AI\claude\claude-code-sourcemap-main\start-claudecodeX.ps1"
+
+<img width="827" height="363" alt="image" src="https://github.com/user-attachments/assets/33145d38-3bf8-4e97-a69c-6c2d04497f74" />
+
+
+
 ## 声明
 
 - 源码版权归 [Anthropic](https://www.anthropic.com) 所有
