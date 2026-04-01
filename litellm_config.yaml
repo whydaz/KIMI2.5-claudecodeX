@@ -1,0 +1,61 @@
+model_list:
+  # 主力模型 → Kimi K2.5
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: openai/kimi-k2.5
+      api_base: https://api.moonshot.cn/v1
+      api_key: os.environ/KIMI_API_KEY
+
+  - model_name: claude-sonnet-4-5-20250929
+    litellm_params:
+      model: openai/kimi-k2.5
+      api_base: https://api.moonshot.cn/v1
+      api_key: os.environ/KIMI_API_KEY
+
+  - model_name: claude-sonnet-4-20250514
+    litellm_params:
+      model: openai/kimi-k2.5
+      api_base: https://api.moonshot.cn/v1
+      api_key: os.environ/KIMI_API_KEY
+
+  - model_name: claude-opus-4-6
+    litellm_params:
+      model: openai/kimi-k2.5
+      api_base: https://api.moonshot.cn/v1
+      api_key: os.environ/KIMI_API_KEY
+
+  - model_name: claude-opus-4-5-20251101
+    litellm_params:
+      model: openai/kimi-k2.5
+      api_base: https://api.moonshot.cn/v1
+      api_key: os.environ/KIMI_API_KEY
+
+  - model_name: claude-opus-4-1-20250805
+    litellm_params:
+      model: openai/kimi-k2.5
+      api_base: https://api.moonshot.cn/v1
+      api_key: os.environ/KIMI_API_KEY
+
+  - model_name: claude-opus-4-20250514
+    litellm_params:
+      model: openai/kimi-k2.5
+      api_base: https://api.moonshot.cn/v1
+      api_key: os.environ/KIMI_API_KEY
+
+  # 小/快模型 (haiku) → Kimi K2.5
+  - model_name: claude-haiku-4-5-20251001
+    litellm_params:
+      model: openai/kimi-k2.5
+      api_base: https://api.moonshot.cn/v1
+      api_key: os.environ/KIMI_API_KEY
+
+  # 通配：所有未匹配的 claude- 开头模型也转发
+  - model_name: "claude-*"
+    litellm_params:
+      model: openai/kimi-k2.5
+      api_base: https://api.moonshot.cn/v1
+      api_key: os.environ/KIMI_API_KEY
+
+litellm_settings:
+  drop_params: true
+  num_retries: 2

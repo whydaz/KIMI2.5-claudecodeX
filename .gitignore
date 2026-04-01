@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+package/node_modules/
+restored-src/node_modules/
+
+# Lock files
+package/bun.lock
+
+# Source map (57 MB, can be obtained from npm: @anthropic-ai/claude-code@2.1.88)
+package/cli.js.map
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.cursor/
+*.swp
+*.swo
+
+# Terminals / temp
+terminals/
+agent-transcripts/
+assets/
