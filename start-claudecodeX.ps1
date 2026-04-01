@@ -29,7 +29,7 @@ $env:ANTHROPIC_BASE_URL = "http://localhost:$PROXY_PORT"
 $env:ANTHROPIC_API_KEY  = $KIMI_KEY
 
 try {
-    & node $CLI_SCRIPT @args
+    & node $CLI_SCRIPT --bare @args
 } finally {
     Write-Host "`n[*] shutting down proxy (PID $($proxyProc.Id))..." -ForegroundColor Cyan
     Stop-Process -Id $proxyProc.Id -Force -ErrorAction SilentlyContinue
