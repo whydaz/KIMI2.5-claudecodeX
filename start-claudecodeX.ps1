@@ -1,4 +1,16 @@
-$KIMI_KEY = "YOUR_KIMI_API_KEY_HERE"
+$envFile = Join-Path $PSScriptRoot ".env"
+if (Test-Path $envFile) {
+    Get-Content $envFile | ForEach-Object {
+        if ($_ -match '^\s*([^#][^=]+?)\s*=\s*(.+?)\s*$') {
+            Set-Item "env:$($Matches[1])" $Matches[2]
+        }
+    }
+}
+$KIMI_KEY = $env:KIMI_API_KEY
+if (-not $KIMI_KEY) {
+    Write-Host "[!] KIMI_API_KEY not set. Create a .env file with: KIMI_API_KEY=sk-xxxxx" -ForegroundColor Red
+    exit 1
+}
 $PROXY_SCRIPT = Join-Path $PSScriptRoot "proxy.mjs"
 $CLI_SCRIPT  = Join-Path $PSScriptRoot "package\cli.js"
 $PROXY_PORT  = 4010

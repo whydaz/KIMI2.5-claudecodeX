@@ -9,6 +9,9 @@ package/bun.lock
 # Source map (57 MB, can be obtained from npm: @anthropic-ai/claude-code@2.1.88)
 package/cli.js.map
 
+# Secrets
+.env
+
 # OS / IDE
 .DS_Store
 Thumbs.db
