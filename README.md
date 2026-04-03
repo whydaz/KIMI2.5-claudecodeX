@@ -41,13 +41,38 @@ restored-src/src/
 └── vim/                  # Vim 模式
 ```
 
-Open-source Claude Code with KIMI2.5 backend support ,Simply enter your KIMI API KEY to complete deployment.
+## KIMI2.5 部署
+
+Open-source Claude Code with KIMI2.5 backend support. Simply enter your KIMI API KEY to complete deployment.
+
+### 1. 配置 API Key
+
+在项目根目录创建 `.env` 文件（该文件已被 `.gitignore` 忽略，不会提交到仓库）：
+
+```
+KIMI_API_KEY=sk-your-kimi-api-key-here
+```
+
+> 可参考 `.env.example` 模板。API Key 从 [Moonshot AI 开放平台](https://platform.moonshot.cn/) 获取。
+
+### 2. 启动
+
+确保已安装 **Node.js >= 18**，然后在 PowerShell 中运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File start-claudecodeX.ps1
+```
+
+脚本会自动：
+1. 从 `.env` 读取 `KIMI_API_KEY`
+2. 启动本地 Anthropic → Kimi 协议转换代理（端口 4010）
+3. 启动 claudecodeX CLI（`--bare --dangerously-skip-permissions` 模式）
+
+### 截图
+
 <img width="485" height="193" alt="image" src="https://github.com/user-attachments/assets/483db6a1-76ee-4317-9566-9b7b543ffc3b" />
 
 <img width="1044" height="88" alt="image" src="https://github.com/user-attachments/assets/3eda8577-3d46-46d8-89c7-c74fa8fb4768" />
-
-
-(base) PS F:\AI\claude\claude-code-sourcemap-main> powershell -ExecutionPolicy Bypass -File "f:\AI\claude\claude-code-sourcemap-main\start-claudecodeX.ps1"
 
 <img width="827" height="363" alt="image" src="https://github.com/user-attachments/assets/33145d38-3bf8-4e97-a69c-6c2d04497f74" />
 
