@@ -42,7 +42,7 @@ function convertAnthropicToOpenAI(body) {
 
   for (const msg of body.messages || []) {
     if (msg.role === "assistant") {
-      const oaiMsg = { role: "assistant", content: null, tool_calls: [] };
+      const oaiMsg = { role: "assistant", content: null, reasoning_content: "", tool_calls: [] };
       const textParts = [];
 
       if (typeof msg.content === "string") {
