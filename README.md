@@ -70,8 +70,6 @@ powershell -ExecutionPolicy Bypass -File start-claudecodeX.ps1
 
 ### 截图
 
-<img width="485" height="193" alt="image" src="https://github.com/user-attachments/assets/483db6a1-76ee-4317-9566-9b7b543ffc3b" />
-
 <img width="1044" height="88" alt="image" src="https://github.com/user-attachments/assets/3eda8577-3d46-46d8-89c7-c74fa8fb4768" />
 
 <img width="827" height="363" alt="image" src="https://github.com/user-attachments/assets/33145d38-3bf8-4e97-a69c-6c2d04497f74" />
