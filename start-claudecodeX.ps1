@@ -1,4 +1,4 @@
-$KIMI_KEY = "your kimi api key"
+$KIMI_KEY = "YOUR_KIMI_API_KEY_HERE"
 $PROXY_SCRIPT = Join-Path $PSScriptRoot "proxy.mjs"
 $CLI_SCRIPT  = Join-Path $PSScriptRoot "package\cli.js"
 $PROXY_PORT  = 4010
@@ -47,7 +47,7 @@ $env:ANTHROPIC_BASE_URL = "http://localhost:$PROXY_PORT"
 $env:ANTHROPIC_API_KEY  = $KIMI_KEY
 
 try {
-    & node $CLI_SCRIPT --bare @args
+    & node $CLI_SCRIPT --bare --dangerously-skip-permissions @args
 } finally {
     Write-Host "`n[*] shutting down proxy (PID $($proxyProc.Id))..." -ForegroundColor Cyan
     Stop-Process -Id $proxyProc.Id -Force -ErrorAction SilentlyContinue
