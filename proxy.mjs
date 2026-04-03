@@ -8,6 +8,20 @@ const PORT = parseInt(process.env.PROXY_PORT || "4010", 10);
 
 const agent = new https.Agent({ keepAlive: true, maxSockets: 6 });
 
+// ── Anthropic → OpenAI conversion ───────────────────────────────────────────
+
+function convertAnthropicToolsToOpenAI(anthropicTools) {
+  if (!anthropicTools?.length) return undefined;
+  return anthropicTools.map((t) => ({
+    type: "function",
+    function: {
+      name: t.name,
+      description: t.description || "",
+      parameters: t.input_schema || { type: "object", properties: {} },
+    },
+  }));
+}
+
 function convertAnthropicToOpenAI(body) {
   const messages = [];
 
@@ -27,57 +41,150 @@ function convertAnthropicToOpenAI(body) {
   }
 
   for (const msg of body.messages || []) {
-    if (typeof msg.content === "string") {
-      messages.push({ role: msg.role, content: msg.content });
+    if (msg.role === "assistant") {
+      const oaiMsg = { role: "assistant", content: null, tool_calls: [] };
+      const textParts = [];
+
+      if (typeof msg.content === "string") {
+        oaiMsg.content = msg.content;
+        messages.push(oaiMsg);
+        continue;
+      }
+
+      for (const block of msg.content || []) {
+        if (block.type === "text") {
+          textParts.push(block.text);
+        } else if (block.type === "tool_use") {
+          oaiMsg.tool_calls.push({
+            id: block.id,
+            type: "function",
+            function: {
+              name: block.name,
+              arguments:
+                typeof block.input === "string"
+                  ? block.input
+                  : JSON.stringify(block.input),
+            },
+          });
+        }
+      }
+
+      oaiMsg.content = textParts.length ? textParts.join("\n") : null;
+      if (!oaiMsg.tool_calls.length) delete oaiMsg.tool_calls;
+      messages.push(oaiMsg);
       continue;
     }
-    const parts = [];
-    for (const block of msg.content) {
-      if (block.type === "text") parts.push(block.text);
-      else if (block.type === "tool_use")
-        parts.push(`[tool_use id=${block.id} name=${block.name}] ${JSON.stringify(block.input)}`);
-      else if (block.type === "tool_result")
-        parts.push(`[tool_result id=${block.tool_use_id}] ${typeof block.content === "string" ? block.content : JSON.stringify(block.content)}`);
-      else parts.push(JSON.stringify(block));
+
+    if (msg.role === "user") {
+      if (typeof msg.content === "string") {
+        messages.push({ role: "user", content: msg.content });
+        continue;
+      }
+
+      const userTexts = [];
+      for (const block of msg.content || []) {
+        if (block.type === "text") {
+          userTexts.push(block.text);
+        } else if (block.type === "tool_result") {
+          const resultContent =
+            typeof block.content === "string"
+              ? block.content
+              : Array.isArray(block.content)
+                ? block.content
+                    .map((b) => (b.type === "text" ? b.text : JSON.stringify(b)))
+                    .join("\n")
+                : JSON.stringify(block.content ?? "");
+          messages.push({
+            role: "tool",
+            tool_call_id: block.tool_use_id,
+            content: resultContent,
+          });
+        }
+      }
+
+      if (userTexts.length) {
+        messages.push({ role: "user", content: userTexts.join("\n") });
+      }
+      continue;
     }
-    messages.push({ role: msg.role, content: parts.join("\n") });
+
+    if (typeof msg.content === "string") {
+      messages.push({ role: msg.role, content: msg.content });
+    } else {
+      const parts = (msg.content || []).map((b) =>
+        b.type === "text" ? b.text : JSON.stringify(b)
+      );
+      messages.push({ role: msg.role, content: parts.join("\n") });
+    }
   }
 
-  return {
+  const result = {
     model: KIMI_MODEL,
     messages,
     max_tokens: body.max_tokens || 8192,
     temperature: body.temperature ?? 1,
     stream: !!body.stream,
   };
+
+  const oaiTools = convertAnthropicToolsToOpenAI(body.tools);
+  if (oaiTools) {
+    result.tools = oaiTools;
+  }
+
+  return result;
 }
 
-function convertOpenAIChunkToAnthropicSSE(chunk, index) {
-  if (!chunk.choices?.[0]) return null;
-  const delta = chunk.choices[0].delta;
-  const finishReason = chunk.choices[0].finish_reason;
+// ── OpenAI → Anthropic conversion (non-stream) ─────────────────────────────
 
-  if (finishReason) {
-    return null;
+function convertOpenAINonStreamToAnthropic(openaiResp) {
+  const choice = openaiResp.choices?.[0];
+  const msg = choice?.message || {};
+  const content = [];
+
+  const reasoning = msg.reasoning_content || "";
+  const text = msg.content || "";
+  const combined = reasoning
+    ? `<thinking>\n${reasoning}\n</thinking>\n\n${text}`
+    : text;
+
+  if (combined) {
+    content.push({ type: "text", text: combined });
   }
 
-  if (delta?.reasoning_content) {
-    return `event: content_block_delta\ndata: ${JSON.stringify({
-      type: "content_block_delta",
-      index: 0,
-      delta: { type: "text_delta", text: delta.reasoning_content },
-    })}\n\n`;
+  let stopReason = "end_turn";
+
+  if (msg.tool_calls?.length) {
+    for (const tc of msg.tool_calls) {
+      let parsedInput = {};
+      try {
+        parsedInput = JSON.parse(tc.function.arguments || "{}");
+      } catch {}
+      content.push({
+        type: "tool_use",
+        id: tc.id,
+        name: tc.function.name,
+        input: parsedInput,
+      });
+    }
+    stopReason = "tool_use";
   }
 
-  if (delta?.content) {
-    return `event: content_block_delta\ndata: ${JSON.stringify({
-      type: "content_block_delta",
-      index: 0,
-      delta: { type: "text_delta", text: delta.content },
-    })}\n\n`;
-  }
-  return null;
+  return {
+    id: `msg_${Date.now()}`,
+    type: "message",
+    role: "assistant",
+    content,
+    model: openaiResp.model || KIMI_MODEL,
+    stop_reason: stopReason,
+    stop_sequence: null,
+    usage: {
+      input_tokens: openaiResp.usage?.prompt_tokens || 0,
+      output_tokens: openaiResp.usage?.completion_tokens || 0,
+    },
+  };
 }
+
+// ── OpenAI → Anthropic conversion (stream) ──────────────────────────────────
 
 function makeAnthropicStreamStart(model) {
   const msgStart = {
@@ -90,41 +197,174 @@ function makeAnthropicStreamStart(model) {
       model,
       stop_reason: null,
       stop_sequence: null,
-      usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
     },
   };
-  const blockStart = {
-    type: "content_block_start",
-    index: 0,
-    content_block: { type: "text", text: "" },
-  };
-  return (
-    `event: message_start\ndata: ${JSON.stringify(msgStart)}\n\n` +
-    `event: content_block_start\ndata: ${JSON.stringify(blockStart)}\n\n`
-  );
+  return `event: message_start\ndata: ${JSON.stringify(msgStart)}\n\n`;
 }
 
-function convertOpenAINonStreamToAnthropic(openaiResp) {
-  const choice = openaiResp.choices?.[0];
-  const reasoning = choice?.message?.reasoning_content || "";
-  const content = choice?.message?.content || "";
-  const combined = reasoning
-    ? `<thinking>\n${reasoning}\n</thinking>\n\n${content}`
-    : content;
-  return {
-    id: `msg_${Date.now()}`,
-    type: "message",
-    role: "assistant",
-    content: [{ type: "text", text: combined }],
-    model: openaiResp.model || KIMI_MODEL,
-    stop_reason: "end_turn",
-    stop_sequence: null,
-    usage: {
-      input_tokens: openaiResp.usage?.prompt_tokens || 0,
-      output_tokens: openaiResp.usage?.completion_tokens || 0,
-    },
-  };
+function sseEvent(event, data) {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
+
+class StreamState {
+  constructor() {
+    this.contentBlockIndex = 0;
+    this.textBlockStarted = false;
+    this.inReasoning = false;
+    this.reasoningEnded = false;
+    this.toolCalls = {};
+    this.toolBlockIndices = {};
+  }
+
+  processChunk(parsed, res) {
+    const choice = parsed.choices?.[0];
+    if (!choice) return;
+
+    const delta = choice.delta || {};
+    const finishReason = choice.finish_reason;
+
+    if (delta.reasoning_content) {
+      this._ensureTextBlock(res);
+      if (!this.inReasoning) {
+        this.inReasoning = true;
+        res.write(sseEvent("content_block_delta", {
+          type: "content_block_delta",
+          index: this.textBlockIndex,
+          delta: { type: "text_delta", text: "<thinking>\n" },
+        }));
+      }
+      res.write(sseEvent("content_block_delta", {
+        type: "content_block_delta",
+        index: this.textBlockIndex,
+        delta: { type: "text_delta", text: delta.reasoning_content },
+      }));
+      return;
+    }
+
+    if (delta.content) {
+      this._ensureTextBlock(res);
+      if (this.inReasoning && !this.reasoningEnded) {
+        this.reasoningEnded = true;
+        res.write(sseEvent("content_block_delta", {
+          type: "content_block_delta",
+          index: this.textBlockIndex,
+          delta: { type: "text_delta", text: "\n</thinking>\n\n" },
+        }));
+      }
+      res.write(sseEvent("content_block_delta", {
+        type: "content_block_delta",
+        index: this.textBlockIndex,
+        delta: { type: "text_delta", text: delta.content },
+      }));
+      return;
+    }
+
+    if (delta.tool_calls) {
+      if (this.textBlockStarted) {
+        this._closeTextBlock(res);
+      }
+
+      for (const tc of delta.tool_calls) {
+        const idx = tc.index ?? 0;
+
+        if (tc.id) {
+          const blockIndex = this.contentBlockIndex++;
+          this.toolCalls[idx] = { id: tc.id, name: tc.function?.name || "", args: "" };
+          this.toolBlockIndices[idx] = blockIndex;
+
+          res.write(sseEvent("content_block_start", {
+            type: "content_block_start",
+            index: blockIndex,
+            content_block: {
+              type: "tool_use",
+              id: tc.id,
+              name: tc.function?.name || "",
+              input: {},
+            },
+          }));
+        }
+
+        if (tc.function?.arguments) {
+          const blockIndex = this.toolBlockIndices[idx];
+          if (blockIndex !== undefined) {
+            this.toolCalls[idx].args += tc.function.arguments;
+            res.write(sseEvent("content_block_delta", {
+              type: "content_block_delta",
+              index: blockIndex,
+              delta: {
+                type: "input_json_delta",
+                partial_json: tc.function.arguments,
+              },
+            }));
+          }
+        }
+      }
+      return;
+    }
+
+    if (finishReason) {
+      if (this.textBlockStarted) {
+        this._closeTextBlock(res);
+      }
+
+      for (const idx of Object.keys(this.toolBlockIndices)) {
+        const blockIndex = this.toolBlockIndices[idx];
+        res.write(sseEvent("content_block_stop", {
+          type: "content_block_stop",
+          index: blockIndex,
+        }));
+      }
+
+      const stopReason =
+        finishReason === "tool_calls" ? "tool_use" : "end_turn";
+      res.write(sseEvent("message_delta", {
+        type: "message_delta",
+        delta: { stop_reason: stopReason, stop_sequence: null },
+        usage: { output_tokens: 0 },
+      }));
+      res.write(sseEvent("message_stop", { type: "message_stop" }));
+      res.end();
+    }
+  }
+
+  _ensureTextBlock(res) {
+    if (!this.textBlockStarted) {
+      this.textBlockStarted = true;
+      this.textBlockIndex = this.contentBlockIndex++;
+      res.write(sseEvent("content_block_start", {
+        type: "content_block_start",
+        index: this.textBlockIndex,
+        content_block: { type: "text", text: "" },
+      }));
+    }
+  }
+
+  _closeTextBlock(res) {
+    if (this.textBlockStarted) {
+      if (this.inReasoning && !this.reasoningEnded) {
+        this.reasoningEnded = true;
+        res.write(sseEvent("content_block_delta", {
+          type: "content_block_delta",
+          index: this.textBlockIndex,
+          delta: { type: "text_delta", text: "\n</thinking>\n\n" },
+        }));
+      }
+      res.write(sseEvent("content_block_stop", {
+        type: "content_block_stop",
+        index: this.textBlockIndex,
+      }));
+      this.textBlockStarted = false;
+    }
+  }
+}
+
+// ── HTTP forwarding ─────────────────────────────────────────────────────────
 
 function forwardRequest(openaiBody) {
   return new Promise((resolve, reject) => {
@@ -148,6 +388,8 @@ function forwardRequest(openaiBody) {
     req.end();
   });
 }
+
+// ── Server ──────────────────────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/") {
@@ -175,19 +417,30 @@ const server = http.createServer(async (req, res) => {
   }
 
   const openaiBody = convertAnthropicToOpenAI(body);
-  console.log(`[proxy] ${body.model} → ${KIMI_MODEL} | stream=${openaiBody.stream} | msgs=${openaiBody.messages.length}`);
+  const toolCount = openaiBody.tools?.length || 0;
+  console.log(
+    `[proxy] ${body.model} → ${KIMI_MODEL} | stream=${openaiBody.stream} | msgs=${openaiBody.messages.length} | tools=${toolCount}`
+  );
 
   try {
     const upstream = await forwardRequest(openaiBody);
 
+    // ── Non-stream ──
     if (!openaiBody.stream) {
       let data = "";
       for await (const chunk of upstream) data += chunk;
-      console.log(`[proxy] non-stream upstream status=${upstream.statusCode}`);
+      console.log(`[proxy] non-stream status=${upstream.statusCode}`);
       if (upstream.statusCode !== 200) {
-        console.error(`[proxy] upstream error body: ${data.slice(0, 500)}`);
-        res.writeHead(upstream.statusCode, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: data.slice(0, 500) } }));
+        console.error(`[proxy] error: ${data.slice(0, 500)}`);
+        res.writeHead(upstream.statusCode, {
+          "Content-Type": "application/json",
+        });
+        res.end(
+          JSON.stringify({
+            type: "error",
+            error: { type: "api_error", message: data.slice(0, 500) },
+          })
+        );
         return;
       }
       const parsed = JSON.parse(data);
@@ -197,27 +450,44 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ── Stream error ──
     if (upstream.statusCode !== 200) {
       let errData = "";
       for await (const chunk of upstream) errData += chunk;
-      console.error(`[proxy] stream upstream error status=${upstream.statusCode}: ${errData.slice(0, 500)}`);
+      console.error(
+        `[proxy] stream error status=${upstream.statusCode}: ${errData.slice(0, 500)}`
+      );
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
       });
       res.write(makeAnthropicStreamStart(KIMI_MODEL));
-      res.write(`event: content_block_delta\ndata: ${JSON.stringify({
-        type: "content_block_delta", index: 0,
-        delta: { type: "text_delta", text: `[Proxy Error ${upstream.statusCode}]: ${errData.slice(0, 300)}` },
-      })}\n\n`);
-      res.write(`event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}\n\n`);
-      res.write(`event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 0 } })}\n\n`);
-      res.write(`event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`);
+      res.write(sseEvent("content_block_start", {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" },
+      }));
+      res.write(sseEvent("content_block_delta", {
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "text_delta",
+          text: `[Proxy Error ${upstream.statusCode}]: ${errData.slice(0, 300)}`,
+        },
+      }));
+      res.write(sseEvent("content_block_stop", { type: "content_block_stop", index: 0 }));
+      res.write(sseEvent("message_delta", {
+        type: "message_delta",
+        delta: { stop_reason: "end_turn", stop_sequence: null },
+        usage: { output_tokens: 0 },
+      }));
+      res.write(sseEvent("message_stop", { type: "message_stop" }));
       res.end();
       return;
     }
 
+    // ── Stream success ──
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -225,9 +495,9 @@ const server = http.createServer(async (req, res) => {
     });
     res.write(makeAnthropicStreamStart(KIMI_MODEL));
 
+    const state = new StreamState();
     let buffer = "";
-    let inReasoning = false;
-    let reasoningEnded = false;
+
     upstream.on("data", (chunk) => {
       buffer += chunk.toString();
       const lines = buffer.split("\n");
@@ -236,35 +506,25 @@ const server = http.createServer(async (req, res) => {
         if (!line.startsWith("data: ")) continue;
         const payload = line.slice(6).trim();
         if (payload === "[DONE]") {
-          const stop =
-            `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}\n\n` +
-            `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 0 } })}\n\n` +
-            `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`;
-          res.write(stop);
-          res.end();
+          if (!res.writableEnded) {
+            if (state.textBlockStarted) {
+              state._closeTextBlock(res);
+            }
+            if (Object.keys(state.toolBlockIndices).length === 0) {
+              res.write(sseEvent("message_delta", {
+                type: "message_delta",
+                delta: { stop_reason: "end_turn", stop_sequence: null },
+                usage: { output_tokens: 0 },
+              }));
+              res.write(sseEvent("message_stop", { type: "message_stop" }));
+            }
+            res.end();
+          }
           return;
         }
         try {
           const parsed = JSON.parse(payload);
-          const delta = parsed.choices?.[0]?.delta;
-          if (delta?.reasoning_content && !inReasoning) {
-            inReasoning = true;
-            const tag = `event: content_block_delta\ndata: ${JSON.stringify({
-              type: "content_block_delta", index: 0,
-              delta: { type: "text_delta", text: "<thinking>\n" },
-            })}\n\n`;
-            res.write(tag);
-          }
-          if (delta?.content && inReasoning && !reasoningEnded) {
-            reasoningEnded = true;
-            const tag = `event: content_block_delta\ndata: ${JSON.stringify({
-              type: "content_block_delta", index: 0,
-              delta: { type: "text_delta", text: "\n</thinking>\n\n" },
-            })}\n\n`;
-            res.write(tag);
-          }
-          const sse = convertOpenAIChunkToAnthropicSSE(parsed, 0);
-          if (sse) res.write(sse);
+          state.processChunk(parsed, res);
         } catch {}
       }
     });
@@ -284,7 +544,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`[proxy] Anthropic → Kimi (${KIMI_MODEL}) proxy listening on http://localhost:${PORT}`);
+  console.log(
+    `[proxy] Anthropic → Kimi (${KIMI_MODEL}) proxy on http://localhost:${PORT}`
+  );
   console.log(`[proxy] Target: ${KIMI_API_BASE}/v1/chat/completions`);
-  console.log(`[proxy] API Key: ${KIMI_API_KEY ? KIMI_API_KEY.slice(0, 8) + "..." : "NOT SET"}`);
+  console.log(
+    `[proxy] API Key: ${KIMI_API_KEY ? KIMI_API_KEY.slice(0, 8) + "..." : "NOT SET"}`
+  );
 });
