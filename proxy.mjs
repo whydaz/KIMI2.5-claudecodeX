@@ -6,6 +6,8 @@ const KIMI_MODEL = "kimi-k2.5";
 const KIMI_API_KEY = process.argv[2] || process.env.KIMI_API_KEY || "";
 const PORT = parseInt(process.env.PROXY_PORT || "4010", 10);
 
+const agent = new https.Agent({ keepAlive: true, maxSockets: 6 });
+
 function convertAnthropicToOpenAI(body) {
   const messages = [];
 
@@ -59,6 +61,14 @@ function convertOpenAIChunkToAnthropicSSE(chunk, index) {
     return null;
   }
 
+  if (delta?.reasoning_content) {
+    return `event: content_block_delta\ndata: ${JSON.stringify({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text: delta.reasoning_content },
+    })}\n\n`;
+  }
+
   if (delta?.content) {
     return `event: content_block_delta\ndata: ${JSON.stringify({
       type: "content_block_delta",
@@ -96,11 +106,16 @@ function makeAnthropicStreamStart(model) {
 
 function convertOpenAINonStreamToAnthropic(openaiResp) {
   const choice = openaiResp.choices?.[0];
+  const reasoning = choice?.message?.reasoning_content || "";
+  const content = choice?.message?.content || "";
+  const combined = reasoning
+    ? `<thinking>\n${reasoning}\n</thinking>\n\n${content}`
+    : content;
   return {
     id: `msg_${Date.now()}`,
     type: "message",
     role: "assistant",
-    content: [{ type: "text", text: choice?.message?.content || "" }],
+    content: [{ type: "text", text: combined }],
     model: openaiResp.model || KIMI_MODEL,
     stop_reason: "end_turn",
     stop_sequence: null,
@@ -120,6 +135,7 @@ function forwardRequest(openaiBody) {
       port: url.port || 443,
       path: url.pathname,
       method: "POST",
+      agent,
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${KIMI_API_KEY}`,
@@ -210,6 +226,8 @@ const server = http.createServer(async (req, res) => {
     res.write(makeAnthropicStreamStart(KIMI_MODEL));
 
     let buffer = "";
+    let inReasoning = false;
+    let reasoningEnded = false;
     upstream.on("data", (chunk) => {
       buffer += chunk.toString();
       const lines = buffer.split("\n");
@@ -228,6 +246,23 @@ const server = http.createServer(async (req, res) => {
         }
         try {
           const parsed = JSON.parse(payload);
+          const delta = parsed.choices?.[0]?.delta;
+          if (delta?.reasoning_content && !inReasoning) {
+            inReasoning = true;
+            const tag = `event: content_block_delta\ndata: ${JSON.stringify({
+              type: "content_block_delta", index: 0,
+              delta: { type: "text_delta", text: "<thinking>\n" },
+            })}\n\n`;
+            res.write(tag);
+          }
+          if (delta?.content && inReasoning && !reasoningEnded) {
+            reasoningEnded = true;
+            const tag = `event: content_block_delta\ndata: ${JSON.stringify({
+              type: "content_block_delta", index: 0,
+              delta: { type: "text_delta", text: "\n</thinking>\n\n" },
+            })}\n\n`;
+            res.write(tag);
+          }
           const sse = convertOpenAIChunkToAnthropicSSE(parsed, 0);
           if (sse) res.write(sse);
         } catch {}
